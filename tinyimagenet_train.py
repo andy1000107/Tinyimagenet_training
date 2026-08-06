@@ -66,7 +66,12 @@ import torch.optim as optim
 criterion = nn.CrossEntropyLoss()
 
 # 使用 AdamW 優化器，微調預訓練模型建議使用較小的 learning rate (例如 3e-4)
-optimizer = optim.AdamW(model.parameters(), lr=0.0001, weight_decay=1e-2)
+# 這裡保留 weight decay，並在 loss 中額外加入 L2 regularization，讓正則化更明確
+weight_decay = 1e-2
+l2_lambda = 1e-4
+mean = [0.485, 0.456, 0.406]
+std = [0.229, 0.224, 0.225]
+optimizer = optim.AdamW(model.parameters(), lr=0.0001, weight_decay=weight_decay)
 
 # 設定學習率衰減策略
 epochs = 15
@@ -77,10 +82,23 @@ import copy
 import torch
 
 
+def append_training_log(log_path, train_loss, val_loss, best_acc, epoch):
+    log_path = Path(log_path)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with log_path.open('a', encoding='utf-8') as f:
+        if log_path.stat().st_size == 0:
+            f.write('epoch,train_loss,val_loss,best_val_acc\n')
+        f.write(f'{epoch},{train_loss:.4f},{val_loss:.4f},{best_acc:.4f}\n')
+
+
 def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler, num_epochs=15, print_freq=20, early_stopping_patience=3, early_stopping_min_delta=1e-4):
     best_model_wts = copy.deepcopy(model.state_dict())
     best_acc = 0.0
     epochs_without_improvement = 0
+    last_train_loss = None
+    last_val_loss = None
+    last_epoch = 0
 
     for epoch in range(num_epochs):
         print(f"\nEpoch {epoch+1}/{num_epochs}")
@@ -103,6 +121,11 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
                 inputs = inputs.to(device)
                 labels = labels.to(device)
 
+                # 對輸入影像做 ImageNet 標準化
+                mean_tensor = torch.tensor(mean, dtype=inputs.dtype, device=inputs.device).view(1, 3, 1, 1)
+                std_tensor = torch.tensor(std, dtype=inputs.dtype, device=inputs.device).view(1, 3, 1, 1)
+                inputs = (inputs - mean_tensor) / std_tensor
+
                 optimizer.zero_grad()
 
                 with torch.set_grad_enabled(phase == 'train'):
@@ -111,6 +134,12 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
                     loss = criterion(outputs, labels)
 
                     if phase == 'train':
+
+                        # 額外加入 L2 regularization，防止過擬合
+                        l2_reg = sum(p.pow(2).sum() for p in model.parameters() if p.requires_grad)
+                        loss = loss + l2_lambda * l2_reg
+                        ###
+                        
                         loss.backward()
                         optimizer.step()
 
@@ -134,6 +163,13 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
             epoch_acc_val = epoch_acc.item()
 
             print(f"--> {phase.capitalize()} Epoch Loss: {epoch_loss:.4f} Acc: {epoch_acc_val:.4f}")
+
+            if phase == 'train':
+                last_train_loss = epoch_loss
+            else:
+                last_val_loss = epoch_loss
+                last_epoch = epoch + 1
+                append_training_log('training_log.csv', last_train_loss if last_train_loss is not None else 0.0, last_val_loss, best_acc, last_epoch)
 
             if phase == 'val':
                 if epoch_acc_val > best_acc + early_stopping_min_delta:
