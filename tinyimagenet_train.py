@@ -3,10 +3,22 @@ from tinyimagenet import TinyImageNet
 from pathlib import Path
 import numpy as np
 from matplotlib import pyplot as plt
+from torchvision import transforms
 
 
-val_data = TinyImageNet(Path("~/.torchvision/tinyimagenet/"), split='val', transform=None)
-train_data = TinyImageNet(Path("~/.torchvision/tinyimagenet/"), split='train', transform=None)
+train_transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+])
+
+val_transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+])
+
+val_data = TinyImageNet(Path("~/.torchvision/tinyimagenet/"), split='val', transform=val_transform)
+train_data = TinyImageNet(Path("~/.torchvision/tinyimagenet/"), split='train', transform=train_transform)
+val_data_vis = TinyImageNet(Path("~/.torchvision/tinyimagenet/"), split='val', transform=None)
 n = len(val_data)
 print(type(val_data), type(train_data))
 
@@ -19,6 +31,7 @@ train_loader = DataLoader(train_data, batch_size=32, shuffle=True, num_workers=0
 val_loader = DataLoader(val_data, batch_size=32, shuffle=False, num_workers=0)
 
 # %%
+"""
 n_samples = 8
 print(f"Showing info of {n_samples} samples...")
 
@@ -27,14 +40,14 @@ indices = np.linspace(0, n - 1, n_samples, dtype=int)
 
 plt.figure(figsize=(8, 8))
 for i, idx in enumerate(indices):
-    image, klass = val_data[int(idx)]
+    image, klass = val_data_vis[int(idx)]
     print(f"Sample {i + 1}: class {klass}")
     plt.subplot(n_samples//2, 2, i + 1)
     plt.imshow(image.permute(1, 2, 0))
     plt.axis("off")
 
 plt.show()
-
+"""
 # %%
 #Create a model using ResNet18 architecture
 
@@ -69,8 +82,6 @@ criterion = nn.CrossEntropyLoss()
 # 這裡保留 weight decay，並在 loss 中額外加入 L2 regularization，讓正則化更明確
 weight_decay = 1e-2
 l2_lambda = 1e-4
-mean = [0.485, 0.456, 0.406]
-std = [0.229, 0.224, 0.225]
 optimizer = optim.AdamW(model.parameters(), lr=0.0001, weight_decay=weight_decay)
 
 # 設定學習率衰減策略
@@ -120,11 +131,6 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
             for step, (inputs, labels) in enumerate(dataloader):
                 inputs = inputs.to(device)
                 labels = labels.to(device)
-
-                # 對輸入影像做 ImageNet 標準化
-                mean_tensor = torch.tensor(mean, dtype=inputs.dtype, device=inputs.device).view(1, 3, 1, 1)
-                std_tensor = torch.tensor(std, dtype=inputs.dtype, device=inputs.device).view(1, 3, 1, 1)
-                inputs = (inputs - mean_tensor) / std_tensor
 
                 optimizer.zero_grad()
 
